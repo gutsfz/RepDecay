@@ -1,0 +1,18 @@
+# RepDecay — dependências (stack 100% gratuita, ver readme.md §4)
+# Testado com Python 3.13 no Windows 10.
+
+# Visão computacional
+mediapipe==0.10.35          # Pose Landmarker (Tasks API) — landmarks normalizados + world landmarks
+# opencv-contrib-python vem como dependência do mediapipe; não fixar opencv-python junto
+# para evitar conflito de pacotes cv2 duplicados.
+
+# Cálculo e dados
+numpy>=2.0
+pandas>=2.2
+scipy>=1.14                 # savgol_filter, find_peaks (etapas 2 e 3)
+
+# Modelagem (etapas 9-11)
+scikit-learn>=1.5
+
+# Dashboard (etapa 12)
+streamlit>=1.40

@@ -1,0 +1,150 @@
+# Prompt para desenvolvimento — RepDecay
+
+Você vai atuar como engenheiro(a) de software sênior especializado em visão computacional e ciência de dados aplicada, implementando do zero o projeto **RepDecay**: um sistema que estima a proximidade da falha muscular (RIR — repetições em reserva) no agachamento livre, a partir de vídeo, usando apenas ferramentas 100% gratuitas.
+
+Este é um projeto de portfólio técnico. Rigor científico, transparência sobre limitações e qualidade de engenharia importam mais do que "fazer funcionar de qualquer jeito". Trate isso como um projeto real que será revisado por recrutadores técnicos.
+
+## Contexto do problema
+
+Treino baseado em velocidade (VBT) é um método com respaldo científico para estimar RIR sem levar a série até a falha, mas o hardware validado (transdutores lineares) custa entre 400 e 2.000 dólares. Apps de celular gratuitos existentes têm taxa de erro alta (em um estudo de 2024, dois de três apps testados deixaram de identificar entre 9% e 30% das repetições). Não existe uma solução gratuita, automática e minimamente confiável. É essa lacuna que o RepDecay ataca.
+
+## O que já é validado na ciência vs. o que é exploratório neste projeto
+
+Deixe isso claro no código, nos comentários e no README final:
+
+- **Validado na literatura:** a relação entre queda de velocidade e RIR existe (correlação individual de 0,3 a 0,9, conforme Paulsen et al., 2025, PeerJ); pose estimation sem marcador (MediaPipe incluso) tem erro documentado de 30–50mm em localização articular e 2,8°–14,1° em ângulo articular; rastreamento de barra via vídeo (não landmark corporal) já foi validado contra transdutores.
+- **Exploratório neste projeto:** usar landmark corporal (quadril, via world landmarks do MediaPipe) como proxy do trajeto da barra. Nenhum estudo encontrado faz isso — todos rastreiam a barra diretamente. Por isso o projeto **precisa** de uma etapa de auto-validação própria (ver seção 8 do escopo), comparando a métrica automática contra uma marcação manual quadro a quadro, documentando o erro encontrado.
+
+Não deixe o código nem a documentação apresentarem a parte exploratória como se fosse tecnica com validação científica direta — isso tem que ficar explícito.
+
+## Escopo da V1 (implementar tudo isso)
+
+- Um exercício: agachamento livre, câmera lateral, vídeo gravado (não tempo real)
+- Velocidade concêntrica via world landmarks do MediaPipe (m/s), não só ângulo do joelho
+- Registro manual: peso, reps totais, se a série foi até a falha real
+- Geração de RIR real retroativo a partir de séries até a falha (última rep = 0, penúltima = 1...)
+- Modelo de calibração pessoal por usuário/exercício + fallback populacional (valores da literatura) para usuário novo
+- Comparação entre modelo simples (só velocidade) e modelo com mais variáveis (profundidade + duração concêntrica)
+- Detecção de repetição robusta: suavização (Savitzky-Golay) + detecção de pico por proeminência (`scipy.signal.find_peaks`)
+- Validação sem vazamento de dado: split por sessão (nunca por repetição), métrica MAE
+- Etapa de auto-validação da velocidade automática vs. marcação manual
+- Banco de dados já estruturado para múltiplos exercícios (populado só com agachamento)
+- Dashboard de evolução do usuário (Streamlit ou Tableau Public)
+
+**Não implementar agora (documentar como próximos passos no README):** múltiplos exercícios, tempo real via webcam, modelos preditivos mais sofisticados (redes neurais), app mobile.
+
+## Stack (100% gratuita — não sugerir alternativas pagas)
+
+Python 3.11+, MediaPipe Pose, OpenCV, NumPy, Pandas, SciPy (`savgol_filter`, `find_peaks`), SQLite, scikit-learn (regressão linear), Streamlit ou Tableau Public, Git/GitHub. Ambiente: Jupyter para exploração, scripts `.py` para o pipeline final.
+
+## Esquema do banco de dados
+
+Use exatamente este schema como ponto de partida (pode propor ajustes pontuais, mas justifique):
+
+```sql
+CREATE TABLE exercicio (
+    id INTEGER PRIMARY KEY,
+    nome TEXT,
+    articulacao_principal TEXT,
+    angulo_min_esperado REAL,
+    angulo_max_esperado REAL
+);
+
+CREATE TABLE usuario (
+    id INTEGER PRIMARY KEY,
+    nome TEXT
+);
+
+CREATE TABLE serie (
+    id INTEGER PRIMARY KEY,
+    usuario_id INTEGER REFERENCES usuario(id),
+    exercicio_id INTEGER REFERENCES exercicio(id),
+    peso_kg REAL,
+    data TEXT,
+    reps_totais INTEGER,
+    foi_ate_falha BOOLEAN,
+    tipo_sessao TEXT            -- 'treino' ou 'auto_validacao'
+);
+
+CREATE TABLE repeticao (
+    id INTEGER PRIMARY KEY,
+    serie_id INTEGER REFERENCES serie(id),
+    numero_rep INTEGER,
+    velocidade_concentrica_ms REAL,
+    velocidade_angular_joelho REAL,
+    angulo_max REAL,
+    angulo_min REAL,
+    duracao_concentrica REAL,
+    timestamp_inicio REAL,
+    timestamp_fim REAL,
+    rir_real INTEGER,
+    rir_estimado REAL
+);
+```
+
+## Pipeline técnico (implementar nesta ordem lógica)
+
+1. Extrair landmarks normalizados e world landmarks (quadril, joelho, tornozelo, ombro) frame a frame via MediaPipe Pose
+2. Suavizar ângulo e posição vertical com filtro Savitzky-Golay
+3. Calcular ângulo do joelho por frame (delimita repetições, mede profundidade)
+4. Calcular deslocamento vertical do ponto médio dos quadris (world landmarks) → velocidade concêntrica em m/s
+5. Detectar repetições por picos/vales com proeminência, evitando repetição fantasma
+6. Por repetição: velocidade concêntrica, profundidade (ângulo mínimo), duração da fase concêntrica
+7. Registro manual do usuário (peso, reps, se foi até a falha)
+8. Se foi até a falha: gerar `rir_real` retroativo
+9. Persistir no SQLite
+10. Se há histórico suficiente do usuário/exercício: treinar/atualizar regressão pessoal
+11. Se não há histórico: usar modelo populacional baseado em Paulsen et al. (2025) — ex.: ~0,70 m/s a 79% de 1RM caindo a ~0,49 m/s perto de 89% de 1RM
+12. Aplicar o modelo (pessoal ou populacional) para estimar `rir_estimado`
+13. Dashboard: evolução, curva de fadiga por treino, comparação modelo simples vs. modelo com mais variáveis
+
+## Metodologia de validação (não pular)
+
+- Split treino/teste **por sessão** (data), nunca por repetição individual (repetições da mesma série são correlacionadas)
+- MAE entre `rir_estimado` e `rir_real` nas séries de teste
+- Etapa de auto-validação: gravar 5–10 repetições, marcar manualmente início/fim da fase concêntrica quadro a quadro, comparar com a velocidade automática, documentar o erro médio encontrado
+
+## Ordem de implementação sugerida
+
+1. Script de teste do MediaPipe (landmarks normalizados + world landmarks), validação visual
+2. Ângulo do joelho + suavização
+3. Detecção automática de repetições por proeminência
+4. Velocidade concêntrica via world landmarks
+5. Auto-validação (comparação com marcação manual)
+6. Modelagem + banco SQLite completo
+7. Registro manual (peso, reps, falha)
+8. Geração de `rir_real`
+9. Modelo baseline (literatura) + modelo pessoal (regressão)
+10. Modelo com variáveis adicionais + comparação
+11. Validação com split por sessão e MAE
+12. Dashboard
+13. README final (metodologia, referências, limitações, resultado da auto-validação)
+
+## Limitações que o README final PRECISA declarar
+
+- Estima proximidade da falha pela cinemática, não mede força nem ativação muscular
+- Landmark corporal como proxy da barra é adaptação exploratória, validada só em pequena escala e por auto-validação própria — não tem validação científica direta na literatura
+- Erro sistemático documentado de pose estimation sem marcador: ~30–50mm em localização articular, 2,8°–14,1° em ângulo articular
+- Relação velocidade-RIR varia entre indivíduos (correlação 0,3–0,9); precisão do modelo melhora com mais dado pessoal, não é fixa
+- Precisão depende de quantas séries até a falha o usuário registra
+- V1 processa vídeo gravado, não é feedback em tempo real
+
+## Como quero que você trabalhe
+
+- Vá construindo por etapas, seguindo a ordem de implementação acima — não tente gerar o projeto inteiro de uma vez
+- A cada etapa, explique brevemente as decisões técnicas tomadas (por que Savitzky-Golay, por que split por sessão, etc.) e apresente evidência de que funcionou (prints, valores, gráficos) antes de seguir para a próxima
+- Comente o código com atenção especial a diferenciar o que é fórmula/técnica estabelecida do que é decisão de design própria do projeto
+- Sempre que possível, valide as escolhas contra os valores de referência da literatura citados acima
+- Ao final, gere o README com metodologia, referências (todas as citadas no documento de escopo), limitações e o resultado numérico da auto-validação
+- Referências completas para o README estão no documento de escopo original (seção 12); confira DOIs e autores antes de citar formalmente
+
+## Referências científicas centrais
+
+- Paulsen et al. (2025). Exercise type, training load, velocity loss threshold, and sets affect the relationship between lifting velocity and perceived repetitions in reserve in strength-trained individuals. *PeerJ*, 13, e19797.
+- Concurrent validity of novel smartphone-based apps monitoring barbell velocity in powerlifting exercises. *PLOS ONE* (2024).
+- Video-Based System for Automatic Measurement of Barbell Velocity in Back Squat. *Sensors*, 21(3), 925 (2021).
+- MediaPipe Pose Landmarker (Google AI Edge) — documentação sobre world landmarks.
+
+---
+
+Comece pela etapa 1: um script de teste que roda o MediaPipe Pose num vídeo de agachamento e extrai landmarks normalizados e world landmarks, com validação visual (overlay dos pontos no vídeo ou nos frames).

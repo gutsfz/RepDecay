@@ -1,0 +1,20 @@
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+
+# Vídeos de treino (grandes e pessoais — não versionar)
+data/videos_brutos/
+data/debug/
+
+# Saídas intermediárias (regeneráveis a partir dos vídeos)
+data/landmarks/
+
+# Modelos MediaPipe (.task) — baixados automaticamente pelo script
+modelos_mediapipe/
+
+# Banco local
+data/*.db
+
+# Jupyter
+.ipynb_checkpoints/
