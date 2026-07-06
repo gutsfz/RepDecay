@@ -18,3 +18,7 @@ data/*.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+readme.md
+prompt
+CLAUDE.md
